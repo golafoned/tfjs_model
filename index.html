@@ -4,8 +4,21 @@
         <meta charset="UTF-8" />
         <title>TensorFlow.js MarianMT Model Demo</title>
         <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
-        <!-- Optional: For HuggingFace tokenizers in JS -->
         <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.13.0/dist/transformers.min.js"></script>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 2em;
+            }
+            textarea {
+                width: 100%;
+            }
+            #output {
+                margin-top: 1em;
+                font-size: 1.2em;
+                color: #333;
+            }
+        </style>
     </head>
     <body>
         <h1>TensorFlow.js MarianMT Model Demo</h1>
@@ -16,28 +29,49 @@
             placeholder="Enter English text"
         ></textarea
         ><br />
-        <button onclick="translate()">Translate</button>
+        <button id="translate-btn">Translate</button>
         <h2>Ukrainian Translation:</h2>
         <div id="output"></div>
 
         <script>
+            // Adjust this path if your model files are in a different location
             const MODEL_URL = "tfjs_model/model.json";
 
-            let model, tokenizer;
+            let model,
+                tokenizer,
+                ready = false;
 
             async function loadModelAndTokenizer() {
-                // Load the model
-                model = await tf.loadGraphModel(MODEL_URL);
-                // Load the tokenizer using transformers.js (if compatible)
-                tokenizer =
-                    await window.transformers.AutoTokenizer.from_pretrained(
-                        "Helsinki-NLP/opus-mt-en-uk"
-                    );
+                document.getElementById("output").innerText =
+                    "Loading model and tokenizer...";
+                try {
+                    model = await tf.loadGraphModel(MODEL_URL);
+                    tokenizer =
+                        await window.transformers.AutoTokenizer.from_pretrained(
+                            "Helsinki-NLP/opus-mt-en-uk"
+                        );
+                    ready = true;
+                    document.getElementById("output").innerText = "Ready!";
+                } catch (e) {
+                    document.getElementById("output").innerText =
+                        "Failed to load model or tokenizer.";
+                    console.error(e);
+                }
             }
 
             async function translate() {
-                const inputText = document.getElementById("input").value;
-                if (!inputText) return;
+                if (!ready) {
+                    document.getElementById("output").innerText =
+                        "Model not loaded yet.";
+                    return;
+                }
+                const inputText = document.getElementById("input").value.trim();
+                if (!inputText) {
+                    document.getElementById("output").innerText =
+                        "Please enter text.";
+                    return;
+                }
+                document.getElementById("output").innerText = "Translating...";
 
                 // Tokenize input
                 const encoded = await tokenizer.encode(inputText);
@@ -52,24 +86,15 @@
                     "int32"
                 );
 
-                // Prepare decoder input (start with BOS token)
-                const decoder_input_ids = tf.tensor(
-                    [[tokenizer.token_to_id("<pad>")]],
-                    [1, 1],
-                    "int32"
-                );
-                const decoder_attention_mask = tf.tensor(
-                    [[1]],
-                    [1, 1],
-                    "int32"
-                );
-
-                // Run the model (greedy decode for demonstration)
+                // Prepare decoder input (start with <pad> token)
+                const pad_id = tokenizer.token_to_id("<pad>");
+                const eos_id = tokenizer.token_to_id("</s>");
                 let output_ids = [];
-                let next_input = decoder_input_ids;
-                let next_mask = decoder_attention_mask;
+                let next_input = tf.tensor([[pad_id]], [1, 1], "int32");
+                let next_mask = tf.onesLike(next_input);
+
+                // Greedy decoding loop
                 for (let i = 0; i < 50; ++i) {
-                    // max output length
                     const output = model.execute({
                         input_ids,
                         attention_mask,
@@ -87,11 +112,11 @@
                         await last_token_logits.argMax(-1).array()
                     )[0][0];
 
-                    if (last_token_id === tokenizer.token_to_id("</s>")) break;
+                    if (last_token_id === eos_id) break;
                     output_ids.push(last_token_id);
 
                     // Prepare next decoder input
-                    const ids = [tokenizer.token_to_id("<pad>"), ...output_ids];
+                    const ids = [pad_id, ...output_ids];
                     next_input = tf.tensor([ids], [1, ids.length], "int32");
                     next_mask = tf.onesLike(next_input);
                 }
@@ -100,9 +125,11 @@
                 const translation = await tokenizer.decode(output_ids, {
                     skip_special_tokens: true,
                 });
-                document.getElementById("output").innerText = translation;
+                document.getElementById("output").innerText =
+                    translation || "(No translation produced)";
             }
 
+            document.getElementById("translate-btn").onclick = translate;
             loadModelAndTokenizer();
         </script>
     </body>

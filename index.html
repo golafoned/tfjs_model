@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>TensorFlow.js MarianMT Model Demo</title>
+        <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
+        <!-- Optional: For HuggingFace tokenizers in JS -->
+        <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.13.0/dist/transformers.min.js"></script>
+    </head>
+    <body>
+        <h1>TensorFlow.js MarianMT Model Demo</h1>
+        <textarea
+            id="input"
+            rows="4"
+            cols="50"
+            placeholder="Enter English text"
+        ></textarea
+        ><br />
+        <button onclick="translate()">Translate</button>
+        <h2>Ukrainian Translation:</h2>
+        <div id="output"></div>
+
+        <script>
+            const MODEL_URL = "tfjs_model/model.json";
+
+            let model, tokenizer;
+
+            async function loadModelAndTokenizer() {
+                // Load the model
+                model = await tf.loadGraphModel(MODEL_URL);
+                // Load the tokenizer using transformers.js (if compatible)
+                tokenizer =
+                    await window.transformers.AutoTokenizer.from_pretrained(
+                        "Helsinki-NLP/opus-mt-en-uk"
+                    );
+            }
+
+            async function translate() {
+                const inputText = document.getElementById("input").value;
+                if (!inputText) return;
+
+                // Tokenize input
+                const encoded = await tokenizer.encode(inputText);
+                const input_ids = tf.tensor(
+                    [encoded.ids],
+                    [1, encoded.ids.length],
+                    "int32"
+                );
+                const attention_mask = tf.tensor(
+                    [encoded.attentionMask],
+                    [1, encoded.attentionMask.length],
+                    "int32"
+                );
+
+                // Prepare decoder input (start with BOS token)
+                const decoder_input_ids = tf.tensor(
+                    [[tokenizer.token_to_id("<pad>")]],
+                    [1, 1],
+                    "int32"
+                );
+                const decoder_attention_mask = tf.tensor(
+                    [[1]],
+                    [1, 1],
+                    "int32"
+                );
+
+                // Run the model (greedy decode for demonstration)
+                let output_ids = [];
+                let next_input = decoder_input_ids;
+                let next_mask = decoder_attention_mask;
+                for (let i = 0; i < 50; ++i) {
+                    // max output length
+                    const output = model.execute({
+                        input_ids,
+                        attention_mask,
+                        decoder_input_ids: next_input,
+                        decoder_attention_mask: next_mask,
+                    });
+
+                    // Get logits for the last token
+                    const logits = output.logits ? output.logits : output[0];
+                    const last_token_logits = logits.slice(
+                        [0, -1, 0],
+                        [1, 1, -1]
+                    );
+                    const last_token_id = (
+                        await last_token_logits.argMax(-1).array()
+                    )[0][0];
+
+                    if (last_token_id === tokenizer.token_to_id("</s>")) break;
+                    output_ids.push(last_token_id);
+
+                    // Prepare next decoder input
+                    const ids = [tokenizer.token_to_id("<pad>"), ...output_ids];
+                    next_input = tf.tensor([ids], [1, ids.length], "int32");
+                    next_mask = tf.onesLike(next_input);
+                }
+
+                // Decode output tokens
+                const translation = await tokenizer.decode(output_ids, {
+                    skip_special_tokens: true,
+                });
+                document.getElementById("output").innerText = translation;
+            }
+
+            loadModelAndTokenizer();
+        </script>
+    </body>
+</html>
